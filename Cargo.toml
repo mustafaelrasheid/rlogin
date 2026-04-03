@@ -1,0 +1,10 @@
+[package]
+name = "rlogin"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+clap = { version = "4.6.0", features = [ "derive" ] }
+nix = { version = "0.31.2", features = [ "user", "process" ] }
+termios = "0.3.3"
+yescrypt = "0.1.0-rc.5"

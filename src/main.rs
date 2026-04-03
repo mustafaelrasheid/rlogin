@@ -1,16 +1,20 @@
-use std::io;
-use std::io::{stdout, stdin, Write, Error, ErrorKind};
-use std::io::ErrorKind::NotFound;
+mod args;
+
+use std::error::Error;
+use std::io::{stdout, stdin, Write, Error as IOError};
 use std::ffi::CString;
 use std::os::fd::{AsRawFd};
 use std::fs::{OpenOptions, read_to_string};
-use std::env::{set_var, args};
+use std::env::set_var;
 use nix::libc::{ioctl, dup2, TIOCSCTTY};
 use nix::unistd::{execv, setuid, setgid, setsid, Uid, Gid};
 use termios::{Termios, tcsetattr, TCSAFLUSH, ECHO};
 use yescrypt::{Yescrypt, PasswordVerifier as OtherPasswordVerifier};
+use clap::Parser;
+use crate::args::Args;
 
-fn prompt_read_line(prompt: &str, is_hidden: bool) -> io::Result<String> {
+fn prompt_read_line(prompt: &str, is_hidden: bool)
+-> Result<String, IOError> {
     let mut termios = Termios::from_fd(0)?;
     let original = termios.clone();
     let mut input = String::new();
@@ -20,144 +24,131 @@ fn prompt_read_line(prompt: &str, is_hidden: bool) -> io::Result<String> {
 
     if is_hidden {
         termios.c_lflag &= !ECHO;
-        tcsetattr(0, TCSAFLUSH, &termios)?;
+        tcsetattr(
+            0,
+            TCSAFLUSH,
+            &termios
+        )?;
     }
 
     stdin().read_line(&mut input)?;
     
     if is_hidden {
         println!();
-        tcsetattr(0, TCSAFLUSH, &original)?;
+        tcsetattr(
+            0,
+            TCSAFLUSH,
+            &original
+        )?;
     }
 
-    return Ok(input.trim().to_string());
+    return Ok(
+        input
+            .trim()
+            .to_string()
+    );
 }
 
 fn is_valid_username(username: &str) -> bool {
     if username.is_empty() {
         return false;
     }
-    return username.chars().all(|c| {
-        c.is_ascii_alphanumeric() || c == '_' || c == '-' || c == '.'
-    });
+
+    return username
+        .chars()
+        .all(|c| {
+            c.is_ascii_alphanumeric()
+            || c == '_'
+            || c == '-'
+            || c == '.'
+        });
 }
 
-fn get_conf(filename: &str, query: &str) -> io::Result<Vec<String>> {
+fn get_conf(filename: &str, query: &str)
+-> Result<Vec<String>, Box<dyn Error>> {
     let line = read_to_string(filename)?
         .lines()
-        .find(|lines| lines.starts_with(query))
-        .ok_or_else(|| {
-            let err_msg = format!("Invalid {} format", filename);
-            Error::new(NotFound, &*err_msg)
-        })?
+        .find(|lines| lines.starts_with(&format!("{}:", query)))
+        .ok_or(
+            format!("Invalid {} format", filename)
+        )?
         .to_string();
+    let parts: Vec<String> = line
+        .split(':')
+        .map(|s| s.to_string())
+        .collect();
 
-    let parts: Vec<String> = line.split(':').map(|s| s.to_string()).collect();
     return Ok(parts);
 }
 
-fn check_login(username: &str, password: &str) -> io::Result<bool> {
-    let query = format!("{}:", username);
-    let parts = get_conf("/etc/shadow", &query)?;
+fn check_login(username: &str, password: &str)
+-> Result<(), Box<dyn Error>> {
+    let yescrypt = Yescrypt::default();
+    let parts = get_conf("/etc/shadow", username)?;
 
     if parts.len() < 2 {
         return Err(
-            Error::new(
-                ErrorKind::Other,
-                "Invalid shadow format")
+            "Invalid shadow format".into()
         );
     }
-
-    let stored_username = &parts[0];
-    let stored_hash = &parts[1];
-
-    if stored_username != username {
-        return Err(
-            Error::new(
-                ErrorKind::Other,
-                "Typed username and username in shadow don't match")
-        );
-    }
-
-    let password_hash = yescrypt::PasswordHash::new(stored_hash)
-        .map_err(|_| Error::new(ErrorKind::Other, "Invalid hash format"))?;
-
-    let yescrypt = Yescrypt::default();
-    match yescrypt.verify_password(password.as_bytes(), &password_hash) {
-        Ok(_) => {
-            return Ok(true);
-        },
-        Err(_) => {
-            return Err(Error::new(ErrorKind::Other, "Hash verification failed"));
-        },
-    }
+    yescrypt.verify_password(
+        password.as_bytes(),
+        &yescrypt::PasswordHash::new(&parts[1])?
+    )?;
+    
+    return Ok(());
 }
 
-fn get_user_info(username: &str) -> io::Result<(u32, u32, String, String)> {
-    let query = format!("{}:", username);
-    let parts = get_conf("/etc/passwd", &query)?;
-    let [_, _, ref uid_str, ref gid_str, _, ref home_dir, ref entry_path] = parts[0..7] else {
+fn get_user_info(username: &str)
+-> Result<(u32, u32, String, String), Box<dyn Error>> {
+    let parts = get_conf("/etc/passwd", username)?;
+    let [_, _, ref uid, ref gid, _, ref home_dir, ref shell_path]
+        = parts[0..7] else {
         return Err(
-            Error::new(
-                ErrorKind::Other,
-                "Invalid passwd format"));
+            "Invalid passwd format"
+        .into());
     };
 
-    let uid = uid_str.parse::<u32>()
-        .map_err(|_| Error::new(ErrorKind::Other, "Invalid UID"))?;
-    let gid = gid_str.parse::<u32>()
-        .map_err(|_| Error::new(ErrorKind::Other, "Invalid GID"))?;
-
-    return Ok((uid, gid, home_dir.to_string(), entry_path.to_string()));
+    return Ok((
+        uid.parse::<u32>()?,
+        gid.parse::<u32>()?,
+        home_dir.to_string(),
+        shell_path.to_string()
+    ));
 }
 
 fn authenticate() -> (String, u32, u32, String, String) {
     loop {
-        let username = prompt_read_line("Username: ", false).unwrap_or_else(|e| {
-            eprintln!("Failed to read username: {}", e);
-            String::new()
-        });
+        let username = prompt_read_line("Username: ", false)
+            .unwrap_or_else(|e| {
+                eprintln!("Failed to read username: {}", e);
+                String::new()
+            });
+        let password = prompt_read_line("Password: ", true)
+            .unwrap_or_else(|e| {
+                eprintln!("Failed to read password: {}", e);
+                String::new()
+            });
+        
         if !is_valid_username(&username) {
             eprintln!("Invalid username. Try again.");
             continue;
         }
-        let password = prompt_read_line("Password: ", true).unwrap_or_else(|e| {
-            eprintln!("Failed to read password: {}", e);
-            String::new()
-        });
-        let result = check_login(&username, &password).unwrap_or_else(|e| {
-            eprintln!("Error: Can't match password. {}", e);
-            false
-        });
-
-        match result {
-            true => {
-                match get_user_info(&username) {
-                    Ok((uid, gid, home_dir, entry_path)) => {
-                        return (username, uid, gid, home_dir, entry_path);
-                    },
-                    Err(e) => {
-                        eprintln!("Error: Failed to get user info. {}", e);
-                        continue;
-                    }
-                }
+        if let Err(e) = check_login(&username, &password) {
+            eprintln!("Error: Can't match password due to {}", e);
+            continue;
+        }
+        
+        match get_user_info(&username) {
+            Ok((uid, gid, home_dir, shell_path)) => {
+                return (username, uid, gid, home_dir, shell_path);
             },
-            false => {
-                println!("Username or password don't match. Try again.");
+            Err(e) => {
+                eprintln!("Error: Failed to get user info due to {}", e);
+                continue;
             }
-        };
+        }
     }
-}
-
-fn get_path_arg(default_path: &str) -> String {
-    let args: Vec<String> = args().collect();
-    let shell_path = if args.len() > 1 {
-        args[1].clone()
-    } else {
-        String::from(default_path)
-    };
-
-    return shell_path;
 }
 
 fn init_env(username: &str, home_dir: &str) {
@@ -194,7 +185,7 @@ fn init_tty() {
             }
         },
         Err(e) => {
-            eprintln!("Failed to initalized TTY {}", e);
+            eprintln!("Failed to initalized TTY due to {}", e);
         }
     }
 }
@@ -202,12 +193,16 @@ fn init_tty() {
 fn run(path: &str, uid: u32, gid: u32) {
     let cpath = CString::new(path).expect("Wrong path format");
 
-    setgid(Gid::from_raw(gid)).unwrap_or_else(|e| {
-         eprintln!("Failed to set Gid to {} due to {}", gid, e);
-    });
-    setuid(Uid::from_raw(uid)).unwrap_or_else(|e| {
-         eprintln!("Failed to set Uid to {} due to {}", uid, e);
-    });
+    setgid(Gid::from_raw(gid))
+        .unwrap_or_else(|e| {
+             eprintln!("Failed to set Gid to {} due to {}", gid, e);
+             panic!();
+        });
+    setuid(Uid::from_raw(uid))
+        .unwrap_or_else(|e| {
+             eprintln!("Failed to set Uid to {} due to {}", uid, e);
+             panic!();
+        });
     #[allow(unreachable_code)]{
         execv(&cpath, &[cpath.clone()]).expect(
             &format!("Failed to load {}", path)
@@ -216,10 +211,14 @@ fn run(path: &str, uid: u32, gid: u32) {
 }
 
 fn main() {
-    let (username, uid, gid, home_dir, entry_path) = authenticate();
-    let path = get_path_arg(&entry_path);
+    let args = Args::parse();
+    let (username, uid, gid, home_dir, shell_path) = authenticate();
 
     init_env(&username, &home_dir);
     init_tty();
-    run(&path, uid, gid);
+    run(
+        &args.path.unwrap_or(shell_path),
+        uid,
+        gid
+    );
 }
