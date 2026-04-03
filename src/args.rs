@@ -2,7 +2,7 @@ use clap::Parser;
 
 #[derive(Parser)]
 #[command(name = "rlogin")]
-#[command(version = "0.1.0")]
+#[command(version = "1.0.0")]
 #[command(author = "mustafaelrasheid")]
 #[command(
     about = "login program that only uses yescript",
