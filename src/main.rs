@@ -11,7 +11,7 @@ use nix::unistd::{execv, setuid, setgid, setsid, Uid, Gid};
 use termios::{Termios, tcsetattr, TCSAFLUSH, ECHO};
 use yescrypt::{Yescrypt, PasswordVerifier as OtherPasswordVerifier};
 use clap::Parser;
-use crate::args::Args;
+use crate::args::Cli;
 
 fn prompt_read_line(prompt: &str, is_hidden: bool)
 -> Result<String, IOError> {
@@ -211,13 +211,13 @@ fn run(path: &str, uid: u32, gid: u32) {
 }
 
 fn main() {
-    let args = Args::parse();
+    let cli = Cli::parse();
     let (username, uid, gid, home_dir, shell_path) = authenticate();
 
     init_env(&username, &home_dir);
     init_tty();
     run(
-        &args.path.unwrap_or(shell_path),
+        &cli.path.unwrap_or(shell_path),
         uid,
         gid
     );
