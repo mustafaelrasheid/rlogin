@@ -8,6 +8,6 @@ use clap::Parser;
     about = "login program that only uses yescript",
     long_about = None
 )]
-pub struct Args {
+pub struct Cli {
     pub path: Option<String>,
 }
