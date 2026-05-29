@@ -10,4 +10,6 @@ use clap::Parser;
 )]
 pub struct Cli {
     pub path: Option<String>,
+    #[arg(long)]
+    pub set_xdg_runtime_dir: bool,
 }

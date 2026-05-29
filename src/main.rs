@@ -4,7 +4,9 @@ use std::error::Error;
 use std::io::{stdout, stdin, Write, Error as IOError};
 use std::ffi::CString;
 use std::os::fd::{AsRawFd};
-use std::fs::{OpenOptions, read_to_string};
+use std::os::unix::prelude::PermissionsExt;
+use std::os::unix::fs::chown;
+use std::fs::{OpenOptions, read_to_string, create_dir_all, set_permissions};
 use std::env::set_var;
 use nix::libc::{ioctl, dup2, TIOCSCTTY};
 use nix::unistd::{execv, setuid, setgid, setsid, Uid, Gid};
@@ -210,10 +212,41 @@ fn run(path: &str, uid: u32, gid: u32) {
     }
 }
 
+fn init_xdg_runtime_dir(uid: u32, gid: u32) {
+    let xdg_runtime_dir = format!("/run/user/{}", uid);
+    
+    unsafe {
+        set_var(
+            "XDG_RUNTIME_DIR",
+            &xdg_runtime_dir
+        );
+    }
+    create_dir_all(&xdg_runtime_dir)
+        .unwrap_or_else(|e| {
+            eprintln!("Failed to create XDG_RUNTIME_DIR: {}", e);
+        });
+    set_permissions(
+        &xdg_runtime_dir,
+        PermissionsExt::from_mode(0o700)
+    ).unwrap_or_else(|e| {
+        eprintln!("Failed to chmod XDG_RUNTIME_DIR: {}", e);
+    });
+    chown(
+        xdg_runtime_dir,
+        Some(uid),
+        Some(gid),
+    ).unwrap_or_else(|e| {
+        eprintln!("Failed to chown XDG_RUNTIME_DIR: {}", e);
+    })
+}
+
 fn main() {
     let cli = Cli::parse();
     let (username, uid, gid, home_dir, shell_path) = authenticate();
-
+    
+    if cli.set_xdg_runtime_dir {
+        init_xdg_runtime_dir(uid, gid);
+    }
     init_env(&username, &home_dir);
     init_tty();
     run(
