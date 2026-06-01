@@ -167,7 +167,7 @@ fn authenticate() -> (String, u32, u32, String, String) {
             continue;
         }
         if let Err(e) = check_login(&username, &password) {
-            eprintln!("Error: Can't match password due to {}", e);
+            eprintln!("Failed to match password:{}", e);
             continue;
         }
         
@@ -176,7 +176,7 @@ fn authenticate() -> (String, u32, u32, String, String) {
                 return (username, uid, gid, home_dir, shell_path);
             },
             Err(e) => {
-                eprintln!("Error: Failed to get user info due to {}", e);
+                eprintln!("Failed to get user info: {}", e);
                 continue;
             }
         }
@@ -217,7 +217,7 @@ fn init_tty() {
             }
         },
         Err(e) => {
-            eprintln!("Failed to initalized TTY due to {}", e);
+            eprintln!("Failed to initalized TTY: {}", e);
         }
     }
 }
@@ -227,17 +227,17 @@ fn run(path: &str, uid: u32, gid: u32, supp_groups: &[Gid]) {
 
     setgid(Gid::from_raw(gid))
         .unwrap_or_else(|e| {
-             eprintln!("Failed to set Gid to {} due to {}", gid, e);
+             eprintln!("Failed to set Gid to {}: {}", gid, e);
              panic!();
         });
     setgroups(supp_groups)
         .unwrap_or_else(|e| {
-            eprintln!("Failde to set supp gids due to {}", e);
+            eprintln!("Failde to set supp gids: {}", e);
             panic!();
         });
     setuid(Uid::from_raw(uid))
         .unwrap_or_else(|e| {
-             eprintln!("Failed to set Uid to {} due to {}", uid, e);
+             eprintln!("Failed to set Uid to {}: {}", uid, e);
              panic!();
         });
     #[allow(unreachable_code)]{
