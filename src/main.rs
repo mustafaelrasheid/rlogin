@@ -9,7 +9,7 @@ use std::os::unix::fs::chown;
 use std::fs::{OpenOptions, read_to_string, create_dir_all, set_permissions};
 use std::env::set_var;
 use nix::libc::{ioctl, dup2, TIOCSCTTY};
-use nix::unistd::{execv, setuid, setgid, setsid, Uid, Gid};
+use nix::unistd::{execv, setuid, setgid, setsid, setgroups, Uid, Gid};
 use termios::{Termios, tcsetattr, TCSAFLUSH, ECHO};
 use yescrypt::{Yescrypt, PasswordVerifier as OtherPasswordVerifier};
 use clap::Parser;
@@ -81,6 +81,36 @@ fn get_conf(filename: &str, query: &str)
         .collect();
 
     return Ok(parts);
+}
+
+fn get_supp_groups(username: &str)
+-> Result<Vec<Gid>, Box<dyn Error>> {
+    let content = read_to_string("/etc/group")?;
+    let groups: Vec<Gid> = content
+        .lines()
+        .filter_map(|line| {
+            let parts: Vec<&str> = line
+                .split(':')
+                .collect();
+
+            if parts.len() >= 4 {
+                let members: Vec<&str> = parts[3]
+                    .split(',')
+                    .collect();
+
+                if members.contains(&username) {
+                    return parts[2]
+                        .parse::<u32>()
+                        .ok()
+                        .map(Gid::from_raw);
+                }
+            }
+
+            None
+        })
+        .collect();
+
+    return Ok(groups);
 }
 
 fn check_login(username: &str, password: &str)
@@ -192,13 +222,18 @@ fn init_tty() {
     }
 }
 
-fn run(path: &str, uid: u32, gid: u32) {
+fn run(path: &str, uid: u32, gid: u32, supp_groups: &[Gid]) {
     let cpath = CString::new(path).expect("Wrong path format");
 
     setgid(Gid::from_raw(gid))
         .unwrap_or_else(|e| {
              eprintln!("Failed to set Gid to {} due to {}", gid, e);
              panic!();
+        });
+    setgroups(supp_groups)
+        .unwrap_or_else(|e| {
+            eprintln!("Failde to set supp gids due to {}", e);
+            panic!();
         });
     setuid(Uid::from_raw(uid))
         .unwrap_or_else(|e| {
@@ -252,6 +287,7 @@ fn main() {
     run(
         &cli.path.unwrap_or(shell_path),
         uid,
-        gid
+        gid,
+        &get_supp_groups(&username).unwrap_or(Vec::new())
     );
 }
