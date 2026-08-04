@@ -5,11 +5,11 @@ use clap::Parser;
 #[command(version = "1.1.1")]
 #[command(author = "mustafaelrasheid")]
 #[command(
-    about = "login program that only uses yescript",
-    long_about = None
+	about = "login program that only uses yescript",
+	long_about = None
 )]
 pub struct Cli {
-    pub path: Option<String>,
-    #[arg(long)]
-    pub set_xdg_runtime_dir: bool,
+	pub path: Option<String>,
+	#[arg(long)]
+	pub set_xdg_runtime_dir: bool,
 }
