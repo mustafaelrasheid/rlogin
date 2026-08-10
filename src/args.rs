@@ -5,7 +5,7 @@ use clap::Parser;
 #[command(version = "1.1.1")]
 #[command(author = "mustafaelrasheid")]
 #[command(
-	about = "login program that only uses yescript",
+	about = "A simple login and authentication program.",
 	long_about = None
 )]
 pub struct Cli {
