@@ -167,7 +167,7 @@ fn authenticate() -> (String, u32, u32, String, String) {
 			continue;
 		}
 		if let Err(e) = check_login(&username, &password) {
-			eprintln!("Failed to match password:{}", e);
+			eprintln!("Failed to match password: {}", e);
 			continue;
 		}
 
